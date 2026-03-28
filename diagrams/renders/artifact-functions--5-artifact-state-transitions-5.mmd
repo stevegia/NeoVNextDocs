@@ -1,0 +1,23 @@
+stateDiagram-v2
+    [*] --> queued : JobQueueRepository.EnqueueAsync()
+    queued --> assigned : Go Supervisor claim_next_job()<br/>FOR UPDATE SKIP LOCKED
+    assigned --> running : Supervisor set_job_running()
+    running --> completed : Supervisor complete_job()<br/>outputs uploaded via HTTP + registered in cache_manifest
+    running --> failed : Handler error / timeout
+    assigned --> queued : Lease expired — renewer goroutine failed
+
+    completed --> synced : ArtifactSyncService<br/>File.Copy + ArtifactRepository.InsertAsync
+    failed --> [*]
+    synced --> [*]
+
+    note right of assigned
+        Lease: 10 minutes (LEASE_DURATION_MINUTES).
+        Lease renewer goroutine extends during processing.
+        Expired leases reclaimed on next poll.
+    end note
+
+    note right of completed
+        ArtifactSyncService polls every
+        ClusterPollingIntervalSeconds (10s).
+        Copies outputs from io-cache to artifact-data.
+    end note

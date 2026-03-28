@@ -1,0 +1,14 @@
+flowchart TD
+    A["POST /api/jobs\nJobsController.Enqueue()\nControllers/JobsController.cs"] --> B
+    B["JobQueueService.EnqueueAsync()\nServices/JobQueueService.cs"] --> C & D
+    C["InputStagingService.StageJobInputsAsync()\nServices/InputStagingService.cs"] --> E
+    E["CacheService.StageAsync()\n→ write /data/io-cache/{jobId}/input/\nServices/CacheService.cs"] --> F
+    F["CacheManifestRepository.UpsertAsync()\n→ INSERT cache_manifest (direction='input')\nRepositories/CacheManifestRepository.cs"]
+    D["JobQueueRepository.EnqueueAsync()\n→ INSERT job_queue (status='queued')\nRepositories/JobQueueRepository.cs"]
+
+    style A fill:#1a3a4a,stroke:#00bcd4,color:#e0f7fa
+    style B fill:#263238,stroke:#78909c,color:#b0bec5
+    style C fill:#1a1a3a,stroke:#7c4dff,color:#ede7f6
+    style D fill:#1a1a3a,stroke:#7c4dff,color:#ede7f6
+    style E fill:#1a3a1a,stroke:#4caf50,color:#c8e6c9
+    style F fill:#2a1a1a,stroke:#f44336,color:#ffcdd2

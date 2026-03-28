@@ -1,0 +1,74 @@
+sequenceDiagram
+    participant FE as Frontend<br/>(Electron)
+    participant Hub as SignalR Hub<br/>(NeoVLabHub)
+    participant JC as JobsController
+    participant JQS as JobQueueService
+    participant ISS as InputStagingService
+    participant CS as CacheService
+    participant JQR as JobQueueRepository
+    participant ClDB as Cluster DB<br/>(PostgreSQL)
+    participant RPGA as RunPodGpuPlatformAdapter
+    participant SUP as Go Supervisor<br/>(RunPod pod)
+    participant FT as filetransfer.Client
+    participant CTC as CacheTransferController
+    participant H as Python Handler
+    participant ArtSync as ArtifactSyncService
+    participant AR as ArtifactRepository
+
+    Note over FE,JQR: Phase A — Job Submission
+
+    FE->>JC: POST /api/jobs {mediaId, jobType, parameters}
+    JC->>JQS: EnqueueAsync(jobRecord)
+    JQS->>ISS: StageJobInputsAsync(jobId, inputs)
+    ISS->>CS: StageAsync(jobId, key, stream)
+    CS->>CS: write /data/io-cache/{jobId}/input/{key}
+    JQS->>JQR: EnqueueAsync(clusterJobRecord)
+    JQR->>ClDB: INSERT job_queue (status='queued')
+    JQS->>RPGA: EnsureWarmAsync()
+    RPGA->>RPGA: GraphQL: check pod status
+    JC-->>FE: 202 Accepted {jobId}
+    FE->>Hub: Subscribe to job updates
+
+    Note over SUP,ClDB: Phase B — Worker Claims Job (pull model)
+
+    loop Every 3s (POLL_INTERVAL_SECONDS)
+        SUP->>ClDB: claim_next_job()<br/>SELECT ... FOR UPDATE SKIP LOCKED
+        ClDB-->>SUP: job record (or none)
+        SUP->>ClDB: UPDATE status='assigned',<br/>lease_expires_at=NOW()+10min
+    end
+
+    Note over SUP,H: Phase C — Input Download + Processing
+
+    SUP->>ClDB: UPDATE status='running'
+    SUP->>ClDB: get_input_manifest(job_id)
+    SUP->>FT: Download inputs
+    FT->>CTC: GET /api/cache/{jobId}/input/{key}<br/>(via Tailscale)
+    CTC-->>FT: binary stream
+    FT->>FT: Write to /data/io-cache/{jobId}/input/
+
+    alt Analysis handler (transcription, diarization, etc.)
+        SUP->>H: POST http://127.0.0.1:{port}/handle<br/>{input_path, output_dir, job}
+        H-->>SUP: result JSON
+    else ComfyUI job
+        SUP->>SUP: POST /prompt to ComfyUI :8188<br/>Poll /history, download artifacts
+    end
+
+    Note over SUP,CTC: Phase D — Output Upload
+
+    SUP->>FT: Upload outputs
+    FT->>CTC: PUT /api/cache/{jobId}/output/{key}<br/>(via Tailscale)
+    CTC->>CTC: Write to /data/io-cache/{jobId}/output/
+    SUP->>ClDB: register_output_artifact (INSERT cache_manifest)
+    SUP->>ClDB: UPDATE status='completed'
+
+    Note over ArtSync,AR: Phase E — Artifact Sync
+
+    loop Every 10s (ClusterPollingIntervalSeconds)
+        ArtSync->>ClDB: SELECT FROM job_queue WHERE status='completed'
+        ArtSync->>ArtSync: File.Copy(io-cache → artifacts/)
+        ArtSync->>AR: INSERT job_artifacts (SQLite)
+        ArtSync->>Hub: Broadcast job.completed
+    end
+
+    Hub-->>FE: SignalR event (job.completed / job.failed)
+    FE->>FE: Refresh artifact gallery

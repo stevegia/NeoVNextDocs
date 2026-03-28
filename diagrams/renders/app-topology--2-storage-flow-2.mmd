@@ -1,0 +1,45 @@
+flowchart LR
+    subgraph Stage1["① Input Staging  (job submission)"]
+        S1A["InputStagingService\n+ CacheService"]
+        S1B["/data/io-cache\n/{jobId}/input/{key}"]
+        S1C["cache_manifest\ndirection='input'"]
+        S1A -->|"write"| S1B
+        S1A -->|"INSERT"| S1C
+    end
+
+    subgraph Stage2["② Worker Execution  (claim → run → output)"]
+        S2A["PullWorkerRuntime\n+ ClusterDbClient"]
+        S2B["/data/io-cache\n/{jobId}/input/{key}"]
+        S2C["/data/io-cache\n/{jobId}/output/{file}"]
+        S2D["cache_manifest\ndirection='output'"]
+        S2A -->|"read"| S2B
+        S2A -->|"write"| S2C
+        S2A -->|"INSERT"| S2D
+    end
+
+    subgraph Stage3["③ Artifact Sync  (completion polling)"]
+        S3A["ArtifactSyncService"]
+        S3B["/data/io-cache\n/{jobId}/output/{file}"]
+        S3C["/data/neovlab_artifacts\n/{jobId}/{fileName}"]
+        S3D["job_artifacts\n(SQLite)"]
+        S3A -->|"File.Copy"| S3B
+        S3B -->|"→"| S3C
+        S3A -->|"INSERT"| S3D
+    end
+
+    subgraph Stage4["④ Artifact Retrieval  (frontend request)"]
+        S4A["ArtifactsController"]
+        S4B["/data/neovlab_artifacts\n/{jobId}/{fileName}"]
+        S4C["Browser\nimg / video"]
+        S4A -->|"FileStream"| S4B
+        S4B -->|"HTTP response"| S4C
+    end
+
+    Stage1 --> Stage2
+    Stage2 --> Stage3
+    Stage3 --> Stage4
+
+    style Stage1 fill:#1a2a3a,stroke:#2196f3,color:#bbdefb
+    style Stage2 fill:#1a1a3a,stroke:#7c4dff,color:#ede7f6
+    style Stage3 fill:#1a3a1a,stroke:#4caf50,color:#c8e6c9
+    style Stage4 fill:#3a1a1a,stroke:#f44336,color:#ffcdd2

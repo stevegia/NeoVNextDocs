@@ -1,0 +1,43 @@
+flowchart LR
+    subgraph RunPod["RunPod Pod"]
+        A["Handler output\n(output_dir)"]
+        B["/data/io-cache\n/{jobId}/output/{file}\n(pod ephemeral disk)"]
+    end
+
+    subgraph Transfer["HTTP File Transfer\n(Tailscale VPN)"]
+        TX["PUT /api/cache/{jobId}/output/{key}\nGo filetransfer.Client\n→ CacheTransferController"]
+    end
+
+    subgraph Desktop["Desktop (io-cache)"]
+        C["/data/io-cache\n/{jobId}/output/{file}\n(Docker volume)"]
+        CM["cache_manifest\ndirection='output'\ncache_path=C"]
+    end
+
+    subgraph Backend["Backend API (ArtifactSyncService)"]
+        C1{"File.Exists\n(entry.CachePath)?"}
+        C3["artifacts/\n{jobId}/{fileName}"]
+        D["job_artifacts\n(SQLite)"]
+    end
+
+    subgraph Browser["Electron App"]
+        E["GET /api/artifacts/{id}/download"]
+    end
+
+    A -->|"write"| B
+    B -->|"HTTP PUT"| TX
+    TX -->|"write"| C
+    C -->|"INSERT cache_path"| CM
+    CM -->|"ArtifactSyncService reads\ncache_manifest"| C1
+    C1 -->|"found locally"| C3
+    C3 -->|"INSERT file_path"| D
+    D -->|"File.Exists + FileStream"| E
+
+    style A fill:#2d2d2d,stroke:#555,color:#aaa
+    style B fill:#2a1a2a,stroke:#e91e63,color:#fce4ec
+    style TX fill:#1a3a4a,stroke:#00bcd4,color:#e0f7fa
+    style C fill:#1a3a4a,stroke:#00bcd4,color:#e0f7fa
+    style CM fill:#263238,stroke:#78909c,color:#b0bec5
+    style C1 fill:#2a1a1a,stroke:#f44336,color:#ffcdd2
+    style C3 fill:#1a3a4a,stroke:#00bcd4,color:#e0f7fa
+    style D fill:#263238,stroke:#78909c,color:#b0bec5
+    style E fill:#1b5e20,stroke:#4caf50,color:#c8e6c9

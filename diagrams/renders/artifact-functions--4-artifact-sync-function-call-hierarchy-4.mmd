@@ -1,0 +1,22 @@
+flowchart TD
+    A["ArtifactSyncService._poll_loop()\nServices/ArtifactSyncService.cs"] --> B
+    B["PollClusterCompletionsAsync()"] --> C & J
+
+    C["JobQueueRepository.GetByStatusAsync('completed')\n→ SELECT FROM job_queue"] --> D
+    D["SyncCompletedJobAsync(job)"] --> E & K
+    E["CacheManifestRepository\n.GetByJobIdAndDirectionAsync(jobId, 'output')"] --> F
+    F["File.Copy(entry.CachePath\n→ /data/neovlab_artifacts/{jobId}/{name})"] --> G
+    G["ResolveArtifactType(jobType, entry)"] --> H
+    H["ArtifactRepository.InsertAsync()\n→ INSERT job_artifacts (SQLite)"] --> I
+    I["CacheManifestRepository.MarkSyncedLocallyAsync()"]
+    K["UpsertLocalJobAsync()\n→ UPSERT processing_jobs (SQLite)"] --> L
+    L["NeoVLabHub.SendAsync(\n'job.completed' + 'onJobStatusChanged')"]
+
+    J["JobQueueRepository.GetByStatusAsync('failed')"] --> M
+    M["SyncFailedJobAsync(job)"] --> N
+    N["UpsertLocalJobAsync(status='failed')"] --> O
+    O["NeoVLabHub.SendAsync(\n'job.failed' + 'onJobStatusChanged')"]
+
+    style A fill:#1a3a1a,stroke:#4caf50,color:#c8e6c9
+    style L fill:#1a3a4a,stroke:#00bcd4,color:#e0f7fa
+    style O fill:#b71c1c,stroke:#e53935,color:#ffcdd2

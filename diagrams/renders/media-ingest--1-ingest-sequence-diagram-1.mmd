@@ -1,0 +1,60 @@
+sequenceDiagram
+    participant U as User
+    participant FE as Frontend
+    participant MC as MediaController
+    participant SS as MediaScanService
+    participant FF as ffprobe
+    participant MR as MediaRepository
+    participant DB as SQLite<br/>(media_assets)
+    participant FS as File System
+
+    Note over U,MC: Path A — Manual scan trigger
+
+    U->>FE: Click "Scan Directory" / enter path
+    FE->>MC: POST /api/media/scan {path: "D:\\Videos"}
+    MC->>SS: ScanAsync(path)
+
+    Note over SS,DB: Phase B — Discovery & metadata extraction
+
+    SS->>FS: Directory.EnumerateFiles(path, *.mp4|*.mov|*.avi|...)
+    FS-->>SS: List of file paths
+
+    loop For each media file
+        SS->>MR: GetByFilePathAsync(filePath)
+        MR-->>SS: null (new) or existing asset
+
+        alt New file
+            SS->>FF: ffprobe -print_format json -show_streams {filePath}
+            FF-->>SS: {streams: [{width, height, duration, codec_name}]}
+            SS->>SS: Extract metadata (mime, duration, resolution, codec)
+            SS->>MR: InsertAsync(MediaAsset{...})
+            MR->>DB: INSERT INTO media_assets
+        else Already indexed
+            SS->>SS: Skip (or update if file modified)
+        end
+    end
+
+    SS-->>MC: {scanned: N, added: M, errors: E}
+    MC-->>FE: 200 OK {scanned, added, errors}
+
+    Note over FE,FS: Phase C — Catalog display & streaming
+
+    FE->>MC: GET /api/media?query=&sort=created_at&page=1
+    MC->>MR: SearchAsync(...)
+    MR->>DB: SELECT ... FROM media_assets WHERE ... ORDER BY ... LIMIT ...
+    DB-->>MR: rows
+    MR-->>MC: (items, totalCount)
+    MC-->>FE: {items: [...], page, pageSize, totalCount, totalPages}
+
+    FE->>FE: Render MediaCard grid (catalog)
+
+    U->>FE: Click media card
+    FE->>MC: GET /api/media/{mediaId}
+    MC->>MR: GetByIdAsync(mediaId)
+    MR-->>MC: MediaAsset
+    MC-->>FE: MediaAsset JSON
+
+    FE->>MC: GET /api/media/{mediaId}/stream?token=...
+    MC->>FS: PhysicalFile(asset.FilePath, contentType, enableRangeProcessing: true)
+    FS-->>FE: Binary stream (HTTP Range supported)
+    FE->>FE: Render in VideoPlayer / <img>

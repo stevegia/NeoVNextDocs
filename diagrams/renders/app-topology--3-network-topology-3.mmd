@@ -1,0 +1,28 @@
+flowchart LR
+    subgraph Desktop["Windows Desktop"]
+        API["C# API :6000"]
+        PG["PostgreSQL :5432\n(Docker)"]
+        ELECTRON["Electron :6100"]
+    end
+
+    subgraph Tailscale["Tailscale Mesh VPN"]
+        TS_DESK["100.84.81.75\n(desktop)"]
+        TS_POD["RunPod pod\n(userspace networking)"]
+    end
+
+    subgraph RunPod["RunPod Pod"]
+        SOCAT_FWD["socat\nlocalhost:15432"]
+        GO_SUP["Go Supervisor"]
+    end
+
+    ELECTRON -->|"localhost:6000"| API
+    API -->|"localhost:5432"| PG
+
+    TS_DESK ---|"WireGuard"| TS_POD
+
+    GO_SUP -->|"Tailscale IP:6000"| API
+    SOCAT_FWD -->|"Tailscale nc"| PG
+
+    style Desktop fill:#1a2a3a,stroke:#2196f3,color:#bbdefb
+    style Tailscale fill:#1a3a1a,stroke:#4caf50,color:#c8e6c9
+    style RunPod fill:#2a1a2a,stroke:#e91e63,color:#fce4ec

@@ -1,0 +1,100 @@
+sequenceDiagram
+    participant FE as Frontend
+    participant JC as JobsController
+    participant JQS as JobQueueService
+    participant ISS as InputStagingService
+    participant CS as CacheService
+    participant CMR as CacheManifestRepository
+    participant JQR as JobQueueRepository
+    participant ClDB as Cluster DB (PostgreSQL)
+    participant SUP as Go Supervisor<br/>(RunPod)
+    participant FT as filetransfer.Client
+    participant CTC as CacheTransferController
+    participant H as Python Handler
+    participant ArtSync as ArtifactSyncService
+    participant AR as ArtifactRepository
+    participant HUB as NeoVLabHub (SignalR)
+    participant AC as ArtifactsController
+
+    Note over FE,JQR: Phase 1 — Job Submission
+
+    FE->>JC: POST /api/jobs {mediaId, jobType}
+    JC->>JQS: EnqueueAsync(jobRecord)
+    JQS->>ISS: StageJobInputsAsync(jobId, inputs)
+    ISS->>CS: StageAsync(jobId, key, stream)
+    CS->>CS: write /data/io-cache/{jobId}/input/{key}
+    CS-->>ISS: cachePath
+    ISS->>CMR: UpsertAsync(entry, direction="input")
+    CMR->>ClDB: INSERT cache_manifest
+    JQS->>JQR: EnqueueAsync(clusterJobRecord)
+    JQR->>ClDB: INSERT job_queue (status="queued")
+    JC-->>FE: 202 Accepted {jobId}
+
+    Note over SUP,ClDB: Phase 2 — Go Supervisor Claims Job
+
+    loop Every POLL_INTERVAL_SECONDS (default 3s)
+        SUP->>ClDB: claim_next_job(worker_id, handler_name)<br/>via socat → Tailscale → desktop PG
+        ClDB-->>SUP: job record (or none)
+        SUP->>ClDB: UPDATE status='assigned', lease_expires_at
+    end
+
+    Note over SUP,H: Phase 3 — Download Inputs + Execute
+
+    SUP->>ClDB: set_job_running(job_id)
+    SUP->>ClDB: get_input_manifest(job_id)
+    ClDB-->>SUP: [{cache_path, file_key, ...}]
+    SUP->>FT: Download inputs
+    FT->>CTC: GET /api/cache/{jobId}/input/{key}
+    CTC-->>FT: binary stream
+    FT->>FT: Write to /data/io-cache/{jobId}/input/
+    SUP->>H: POST http://127.0.0.1:{port}/handle<br/>{input_path, output_dir, job}
+    H-->>SUP: result JSON + output files
+
+    Note over SUP,CTC: Phase 4 — Upload Outputs + Register
+
+    loop For each output file
+        SUP->>FT: Upload output
+        FT->>CTC: PUT /api/cache/{jobId}/output/{key}
+        CTC->>CTC: Write to desktop /data/io-cache/
+        SUP->>CMR: register_output_artifact<br/>INSERT cache_manifest (direction='output')
+    end
+    SUP->>ClDB: UPDATE job_queue SET status='completed'
+
+    Note over ArtSync,HUB: Phase 5 — Backend Syncs Completion
+
+    loop Every ClusterPollingIntervalSeconds (default 10s)
+        ArtSync->>JQR: GetByStatusAsync("completed")
+        JQR->>ClDB: SELECT FROM job_queue WHERE status='completed'
+        ClDB-->>ArtSync: completed job records
+        loop For each completed job
+            ArtSync->>CMR: GetByJobIdAndDirectionAsync(jobId, "output")
+            CMR->>ClDB: SELECT FROM cache_manifest WHERE direction='output'
+            loop For each output entry
+                ArtSync->>ArtSync: File.Copy(entry.CachePath → artifacts/{jobId}/{name})
+                ArtSync->>ArtSync: ResolveArtifactType(jobType, entry)
+                ArtSync->>AR: InsertAsync(artifact)
+                AR->>AR: INSERT INTO job_artifacts (SQLite)
+                ArtSync->>CMR: MarkSyncedLocallyAsync(entryId)
+            end
+            ArtSync->>ArtSync: UpsertLocalJobAsync(jobId, "completed")
+            ArtSync->>HUB: SendAsync("job.completed", jobId)
+            ArtSync->>HUB: SendAsync("onJobStatusChanged", payload)
+        end
+    end
+    HUB-->>FE: SignalR push — job.completed
+
+    Note over FE,AC: Phase 6 — Artifact Retrieval
+
+    FE->>AC: GET /api/artifacts/by-job/{jobId}
+    AC->>AR: GetByJobIdAsync(jobId)
+    AR-->>AC: artifact list
+    AC-->>FE: [{artifactId, artifactType, ...}]
+
+    FE->>AC: GET /api/artifacts/{artifactId}/download
+    AC->>AR: GetByIdAsync(artifactId)
+    AR-->>AC: artifact record (filePath)
+    AC->>AC: File.Exists(artifact.FilePath)
+    AC->>AC: GetContentType(artifactType, filePath)
+    AC->>AC: DetectMediaContentType(filePath) — magic-byte sniff
+    AC-->>FE: FileStream + Content-Type header
+    FE->>FE: render img / video in ArtifactGallery

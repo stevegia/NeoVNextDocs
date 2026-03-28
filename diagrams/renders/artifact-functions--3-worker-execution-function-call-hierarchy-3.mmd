@@ -1,0 +1,19 @@
+flowchart TD
+    A["Go Supervisor pollLoop()\nsrc/gpu-supervisor/internal/supervisor/supervisor.go"] --> B
+    B["db.ClaimNextJob()\n→ SELECT FOR UPDATE SKIP LOCKED\n→ UPDATE status='assigned'\nsrc/gpu-supervisor/internal/db/"] -->|job found| C
+    C["processJob(job)"] --> D & E
+    D["db.SetJobRunning()\n→ UPDATE status='running'"]
+    E["db.GetInputManifest()\n→ SELECT cache_manifest WHERE direction='input'"] --> E2
+    E2["filetransfer.Client.DownloadInputs()\n→ GET /api/cache/{jobId}/input/{key}\nvia Tailscale to desktop API"] --> F
+    F["HTTP POST /handle to handler subprocess\n(or ComfyUI /prompt + /history)"] --> G
+    G["filetransfer.Client.UploadOutputs()\n→ PUT /api/cache/{jobId}/output/{key}\nvia Tailscale to desktop API"] --> H
+    H["db.RegisterOutputArtifact()\n→ INSERT cache_manifest (direction='output')"] --> I
+    I["db.CompleteJob()\n→ UPDATE job_queue SET status='completed'"]
+
+    style A fill:#00897b,stroke:#004d40,color:#fff
+    style B fill:#1a3a1a,stroke:#4caf50,color:#c8e6c9
+    style C fill:#263238,stroke:#78909c,color:#b0bec5
+    style E2 fill:#1a3a4a,stroke:#00bcd4,color:#e0f7fa
+    style F fill:#3a1a1a,stroke:#f44336,color:#ffcdd2
+    style G fill:#1a3a4a,stroke:#00bcd4,color:#e0f7fa
+    style I fill:#1a3a1a,stroke:#4caf50,color:#c8e6c9

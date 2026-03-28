@@ -1,0 +1,25 @@
+flowchart TB
+    subgraph RunPodDeploy["RunPod Pod (GPU)"]
+        RP_SUP["Go Supervisor\nprocesses jobs, writes outputs\nto /data/io-cache/{jobId}/output/"]
+        RP_FT["filetransfer.Client\nuploads via HTTP PUT"]
+    end
+
+    subgraph TailscaleVPN["Tailscale Mesh VPN"]
+        VPN["WireGuard tunnel\nuserspace networking\n(RunPod has no /dev/net/tun)"]
+    end
+
+    subgraph DesktopDeploy["Desktop (Windows)"]
+        D_CTC["CacheTransferController\n/api/cache/{jobId}/output/{key}\nwrites to /data/io-cache/"]
+        D_ART["ArtifactSyncService\nFile.Copy → artifacts/{jobId}/\nINSERT job_artifacts (SQLite)"]
+        D_PG["PostgreSQL (Docker)\njob_queue, cache_manifest,\nworker_registry"]
+    end
+
+    RP_SUP -->|"write outputs"| RP_FT
+    RP_FT -->|"HTTP PUT via VPN"| VPN
+    VPN -->|"to desktop API :6000"| D_CTC
+    D_CTC -->|"File.Copy"| D_ART
+    RP_SUP -->|"DB: socat → Tailscale"| D_PG
+
+    style RunPodDeploy fill:#2a1a2a,stroke:#e91e63,color:#fce4ec
+    style TailscaleVPN fill:#1a3a1a,stroke:#4caf50,color:#c8e6c9
+    style DesktopDeploy fill:#1a2a3a,stroke:#2196f3,color:#bbdefb

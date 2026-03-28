@@ -1,0 +1,24 @@
+stateDiagram-v2
+    [*] --> queued : POST /api/jobs
+    queued --> dispatched : JobDispatcherService picks up
+    dispatched --> processing : Worker acknowledges
+    processing --> completed : All artifacts downloaded
+    processing --> failed : Artifact download fails / timeout
+    dispatched --> failed : Worker unreachable / HTTP error
+    queued --> failed : No matching worker / budget exceeded
+
+    completed --> [*]
+    failed --> [*]
+
+    note right of dispatched
+        Worker URL stored in job record.
+        RemoteJobCompletionService polls
+        GET /jobs/{job_id}/status every 10s.
+    end note
+
+    note right of failed
+        R-001: Strict guard — if ANY artifact
+        fails to download, entire job fails.
+        GPU: Staggered retry (10/30/60/120s)
+        on 502/503 before marking failed.
+    end note

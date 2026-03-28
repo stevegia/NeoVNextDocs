@@ -1,0 +1,61 @@
+flowchart LR
+    subgraph Stage1["① Input Staging  (job submission)"]
+        S1A["InputStagingService\n+ CacheService"]
+        S1B["/data/io-cache\n/{jobId}/input/{key}"]
+        S1C["cache_manifest\ndirection='input'"]
+        S1A -->|"write"| S1B
+        S1A -->|"INSERT"| S1C
+    end
+
+    subgraph Stage2["② File Transfer  (RunPod downloads inputs)"]
+        S2A["Go Supervisor\nfiletransfer.Client"]
+        S2B["GET /api/cache/{jobId}/input/{key}\nvia Tailscale"]
+        S2C["/data/io-cache/{jobId}/input/\n(pod local disk)"]
+        S2A -->|"HTTP GET"| S2B
+        S2B -->|"write"| S2C
+    end
+
+    subgraph Stage3["③ Worker Execution  (claim → run → output)"]
+        S3A["Go Supervisor\n+ Python handler"]
+        S3B["/data/io-cache\n/{jobId}/output/{file}\n(pod local disk)"]
+        S3A -->|"write"| S3B
+    end
+
+    subgraph Stage4["④ Output Upload  (worker uploads results)"]
+        S4A["Go Supervisor\nfiletransfer.Client"]
+        S4B["PUT /api/cache/{jobId}/output/{key}\nvia Tailscale"]
+        S4C["/data/io-cache/{jobId}/output/\n(desktop)"]
+        S4A -->|"HTTP PUT"| S4B
+        S4B -->|"write"| S4C
+    end
+
+    subgraph Stage5["⑤ Artifact Sync  (completion polling)"]
+        S5A["ArtifactSyncService"]
+        S5B["/data/io-cache\n/{jobId}/output/{file}"]
+        S5C["/data/neovlab_artifacts\n/{jobId}/{fileName}"]
+        S5D["job_artifacts\n(SQLite)"]
+        S5A -->|"File.Copy"| S5B
+        S5B -->|"→"| S5C
+        S5A -->|"INSERT"| S5D
+    end
+
+    subgraph Stage6["⑥ Artifact Retrieval  (frontend request)"]
+        S6A["ArtifactsController"]
+        S6B["/data/neovlab_artifacts\n/{jobId}/{fileName}"]
+        S6C["Electron app\nimg / video"]
+        S6A -->|"FileStream"| S6B
+        S6B -->|"HTTP response"| S6C
+    end
+
+    Stage1 --> Stage2
+    Stage2 --> Stage3
+    Stage3 --> Stage4
+    Stage4 --> Stage5
+    Stage5 --> Stage6
+
+    style Stage1 fill:#1a2a3a,stroke:#2196f3,color:#bbdefb
+    style Stage2 fill:#2a1a2a,stroke:#e91e63,color:#fce4ec
+    style Stage3 fill:#1a1a3a,stroke:#7c4dff,color:#ede7f6
+    style Stage4 fill:#2a1a2a,stroke:#e91e63,color:#fce4ec
+    style Stage5 fill:#1a3a1a,stroke:#4caf50,color:#c8e6c9
+    style Stage6 fill:#3a1a1a,stroke:#f44336,color:#ffcdd2

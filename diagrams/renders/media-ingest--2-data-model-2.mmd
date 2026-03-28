@@ -1,0 +1,39 @@
+erDiagram
+    media_assets {
+        TEXT media_id PK "UUID"
+        TEXT file_name "e.g. interview.mp4"
+        TEXT file_path "Absolute path on disk"
+        INTEGER file_size_bytes
+        TEXT mime_type "video/mp4, image/png, etc."
+        INTEGER duration_seconds "null for images"
+        INTEGER width
+        INTEGER height
+        TEXT codec "h264, hevc, vp9, etc."
+        TEXT created_at
+        TEXT updated_at
+    }
+
+    processing_jobs {
+        TEXT job_id PK "UUID"
+        TEXT media_id FK
+        TEXT job_type "thumbnails, transcription, comfyui, etc."
+        TEXT status "queued, dispatched, processing, completed, failed"
+        TEXT worker_url
+        TEXT error
+        TEXT created_at
+        TEXT updated_at
+    }
+
+    job_artifacts {
+        TEXT artifact_id PK "UUID"
+        TEXT job_id FK
+        TEXT artifact_type "generated_0, transcript_json, etc."
+        TEXT file_path "Absolute path to .bin file"
+        INTEGER file_size_bytes
+        TEXT storage_domain "generated, transcripts, thumbnails, etc."
+        INTEGER sync_eligible
+        TEXT created_at
+    }
+
+    media_assets ||--o{ processing_jobs : "has jobs"
+    processing_jobs ||--o{ job_artifacts : "produces artifacts"

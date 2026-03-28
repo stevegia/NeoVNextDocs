@@ -1,0 +1,20 @@
+flowchart TD
+    A[Queued Job] --> B{Job type?}
+    B -->|CPU type| C["Lookup Workers.RemoteEndpoints.jobType"]
+    B -->|GPU type| D{Gpu.Platform?}
+
+    C --> C1{Endpoint configured?}
+    C1 -->|Yes| E["POST /jobs/dispatch to CPU worker"]
+    C1 -->|No| F["Mark failed: no worker"]
+
+    D -->|LocalGpu| G[Local Docker GPU worker polls cluster DB]
+    D -->|GoogleCloud| H[EnsureWarmAsync sets min-instances=1<br/>Cloud Run worker polls cluster DB]
+
+    G --> J{RequiresAsyncWorker?}
+    H --> J
+
+    J -->|Yes: stub only| K["Register job + return<br/>(worker handles async)"]
+    J -->|No| E
+
+    style A fill:#263238,stroke:#78909c,color:#b0bec5
+    style F fill:#b71c1c,stroke:#e53935,color:#ffcdd2

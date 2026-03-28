@@ -1,0 +1,62 @@
+sequenceDiagram
+    participant SUP as Go Supervisor<br/>(RunPod pod)
+    participant H as Python Handler
+    participant CU as ComfyUI Server
+    participant FT as filetransfer.Client
+    participant CTC as CacheTransferController<br/>(Desktop API)
+    participant ArtSync as ArtifactSyncService
+    participant DB as SQLite<br/>(job_artifacts)
+    participant AC as ArtifactsController
+    participant FE as Frontend<br/>(Electron)
+
+    Note over SUP,CU: Phase A — Worker creates artifact
+
+    alt Analysis Job (transcription, diarization, etc.)
+        SUP->>H: POST /handle {input_path, output_dir, job}
+        H->>H: handler.handle(input_path, output_dir)
+        H-->>SUP: result JSON + output files in output_dir
+    else ComfyUI Job (image/video generation)
+        SUP->>CU: POST /prompt (workflow JSON)
+        SUP->>CU: GET /history/{prompt_id}
+        CU-->>SUP: {outputs: {node_id: {images: [...]}}}
+        loop For each output item
+            SUP->>CU: GET /view?filename=...&type=output
+            CU-->>SUP: raw bytes (PNG/JPEG/WebP/MP4)
+            SUP->>SUP: Write to /data/io-cache/{jobId}/output/
+        end
+    end
+
+    Note over SUP,CTC: Phase B — Output upload to desktop
+
+    loop For each output file
+        SUP->>FT: Upload output
+        FT->>CTC: PUT /api/cache/{jobId}/output/{fileKey}<br/>(via Tailscale VPN)
+        CTC->>CTC: Write to /data/io-cache/{jobId}/output/{fileKey}
+        CTC-->>FT: 200 OK {cachePath, fileSizeBytes}
+    end
+    SUP->>SUP: register_output_artifact<br/>INSERT cache_manifest (direction='output')
+    SUP->>SUP: complete_job<br/>UPDATE job_queue SET status='completed'
+
+    Note over ArtSync,DB: Phase C — Backend syncs completed job
+
+    loop Every 10s (ClusterPollingIntervalSeconds)
+        ArtSync->>ArtSync: Poll job_queue for status='completed'
+        ArtSync->>ArtSync: Read cache_manifest entries (direction='output')
+        loop For each output entry
+            ArtSync->>ArtSync: File.Copy(io-cache → artifacts/{jobId}/{name})
+            ArtSync->>ArtSync: ResolveArtifactType(jobType, entry)
+            ArtSync->>DB: INSERT INTO job_artifacts
+            ArtSync->>ArtSync: MarkSyncedLocallyAsync(entryId)
+        end
+        ArtSync->>ArtSync: UpsertLocalJobAsync(jobId, "completed")
+        ArtSync->>ArtSync: SignalR broadcast job.completed
+    end
+
+    Note over AC,FE: Phase D — Frontend fetches artifact for display
+
+    FE->>AC: GET /api/artifacts/{artifactId}/download?token=...
+    AC->>DB: SELECT file_path FROM job_artifacts WHERE artifact_id=...
+    AC->>AC: File.Exists(artifact.FilePath)
+    AC->>AC: DetectMediaContentType(filePath) — magic-byte sniff
+    AC-->>FE: FileStream + Content-Type header
+    FE->>FE: Render <img>/<video> in ArtifactGallery

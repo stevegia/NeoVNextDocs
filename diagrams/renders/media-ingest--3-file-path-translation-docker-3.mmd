@@ -1,0 +1,9 @@
+flowchart LR
+    A["User enters:<br/>D:\Videos\clip.mp4"] --> B["ScanPathTranslation<br/>DriveMap__D = /host/d"]
+    B --> C["Translated:<br/>/host/d/Videos/clip.mp4"]
+    C --> D["Docker volume:<br/>D:/ -> /host/d:ro"]
+    D --> E["ffprobe reads file at<br/>/host/d/Videos/clip.mp4"]
+
+    style A fill:#263238,stroke:#78909c,color:#b0bec5
+    style C fill:#1a3a4a,stroke:#00bcd4,color:#e0f7fa
+    style E fill:#1b5e20,stroke:#4caf50,color:#c8e6c9
